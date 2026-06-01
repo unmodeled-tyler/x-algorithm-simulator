@@ -24,7 +24,7 @@ from .comparison import (
     summarize_comparison_branch,
 )
 from .engine import SimulationEngine, TickResult
-from .models import Agent, Engagement, FeedItem, Post, Scenario, SimulationConfig
+from .models import Agent, Engagement, FeedItem, ModelRoleConfig, Post, Scenario, SimulationConfig
 from .simulation import (
     create_default_agents,
     generate_scenario_posts,
@@ -45,6 +45,7 @@ __all__ = [
     "FeedDiversity",
     "FeedItem",
     "LLMAgentBehavior",
+    "ModelRoleConfig",
     "Post",
     "ReachSummary",
     "Scenario",

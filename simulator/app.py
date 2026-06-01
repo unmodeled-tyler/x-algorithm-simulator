@@ -26,6 +26,7 @@ try:
         ExperimentState,
         FeedItem,
         LLMAgentBehavior,
+        ModelRoleConfig,
         SimulationConfig,
         SimulationEngine,
         feed_diversity_from_items,
@@ -317,30 +318,9 @@ def build_config() -> SimulationConfig:
         negative_action_penalty = st.slider("Negative-action penalty", 0.0, 5.0, 2.5, 0.1)
 
         st.divider()
-        with st.expander("LLM backend", expanded=False):
-            use_llm = st.checkbox(
-                "Enable LLM-backed agents",
-                value=st.session_state.get("use_llm", False),
-                help=(
-                    "If disabled (default), agents use the local deterministic "
-                    "behavior. Enabling this routes decisions through xsim.llm "
-                    "and silently falls back to deterministic on failure."
-                ),
-            )
-            st.session_state["use_llm"] = use_llm
-            provider = st.selectbox("Provider", ["ollama", "openai_compatible"], index=0)
-            if provider == "ollama":
-                model_name = st.text_input("Ollama model", value="qwen2.5:7b")
-                api_base = None
-                api_key = None
-            else:
-                model_name = st.text_input("Model", value="llama-3.1-70b-versatile")
-                api_base = st.text_input(
-                    "Base URL",
-                    value="https://api.groq.com/openai/v1",
-                )
-                api_key = st.text_input("API key", type="password")
-            temperature = st.slider("Temperature", 0.0, 1.5, 0.7, 0.1)
+        model_roles = render_model_role_settings()
+        agent_role = model_roles["agent_decisions"]
+        st.session_state["use_llm"] = agent_role.enabled
 
         if st.button("Reset Run", use_container_width=True):
             st.session_state.clear()
@@ -348,11 +328,12 @@ def build_config() -> SimulationConfig:
 
     return SimulationConfig(
         num_agents=num_agents,
-        model_provider=provider,
-        model_name=model_name,
-        api_base_url=api_base,
-        api_key=api_key,
-        temperature=temperature,
+        model_provider=agent_role.provider,
+        model_name=agent_role.model_name,
+        api_base_url=agent_role.api_base_url,
+        api_key=agent_role.api_key,
+        temperature=agent_role.temperature,
+        model_roles=model_roles,
         in_network_weight=in_network_weight,
         discovery_weight=discovery_weight,
         author_diversity_penalty=diversity_penalty,
@@ -363,6 +344,114 @@ def build_config() -> SimulationConfig:
         social_proof_weight=social_proof_weight,
         random_seed=int(random_seed),
     )
+
+
+def render_model_role_settings() -> dict[str, ModelRoleConfig]:
+    """Render role-specific model controls in the sidebar."""
+    existing = get_state().config.model_roles
+    with st.expander("Model Roles", expanded=False):
+        st.caption("Assign models per role. Only Agent Decisions is used live today.")
+        shared_provider = st.selectbox(
+            "Default provider",
+            ["ollama", "openai_compatible"],
+            index=0,
+            key="model_roles_default_provider",
+        )
+        shared_base_url = None
+        shared_api_key = None
+        if shared_provider == "openai_compatible":
+            shared_base_url = st.text_input(
+                "Default base URL",
+                value="https://api.groq.com/openai/v1",
+                key="model_roles_default_base_url",
+            )
+            shared_api_key = st.text_input(
+                "Default API key",
+                type="password",
+                key="model_roles_default_api_key",
+            )
+
+        roles = {
+            "agent_decisions": "Agent Decisions",
+            "scenario_reactions": "Scenario Reactions",
+            "ranking_assistant": "Ranking Assistant",
+            "analytics_summary": "Analytics Summary",
+        }
+        role_configs: dict[str, ModelRoleConfig] = {}
+        for role_key, label in roles.items():
+            current = existing.get(role_key, ModelRoleConfig())
+            with st.container(border=True):
+                st.markdown(f"**{label}**")
+                enabled = st.checkbox(
+                    "Enable",
+                    value=current.enabled,
+                    key=f"{role_key}_enabled",
+                    help=_role_help(role_key),
+                )
+                provider = st.selectbox(
+                    "Provider",
+                    ["ollama", "openai_compatible"],
+                    index=0 if current.provider == "ollama" else 1,
+                    key=f"{role_key}_provider",
+                )
+                default_model = current.model_name or (
+                    "qwen2.5:7b" if provider == "ollama" else "llama-3.1-70b-versatile"
+                )
+                model_name = st.text_input(
+                    "Model",
+                    value=default_model,
+                    key=f"{role_key}_model",
+                )
+                api_base_url = None
+                api_key = None
+                if provider == "openai_compatible":
+                    api_base_url = st.text_input(
+                        "Base URL",
+                        value=current.api_base_url or shared_base_url or "https://api.openai.com/v1",
+                        key=f"{role_key}_base_url",
+                    )
+                    api_key = st.text_input(
+                        "API key",
+                        value=current.api_key or shared_api_key or "",
+                        type="password",
+                        key=f"{role_key}_api_key",
+                    )
+                temperature = st.slider(
+                    "Temperature",
+                    0.0,
+                    1.5,
+                    current.temperature,
+                    0.1,
+                    key=f"{role_key}_temperature",
+                )
+                max_tokens = st.number_input(
+                    "Max tokens",
+                    min_value=64,
+                    max_value=4000,
+                    value=current.max_tokens,
+                    step=64,
+                    key=f"{role_key}_max_tokens",
+                )
+                role_configs[role_key] = ModelRoleConfig(
+                    provider=provider,
+                    model_name=model_name,
+                    api_base_url=api_base_url,
+                    api_key=api_key or None,
+                    temperature=float(temperature),
+                    max_tokens=int(max_tokens),
+                    enabled=enabled,
+                )
+    return role_configs
+
+
+def _role_help(role_key: str) -> str:
+    descriptions = {
+        "agent_decisions": "Used now when LLM-backed agents decide likes, replies, reposts, or ignores.",
+        "scenario_reactions": "Reserved for LLM-generated first-wave reactions.",
+        "ranking_assistant": "Reserved for future model-assisted ranking explanations or scoring.",
+        "analytics_summary": "Reserved for future natural-language run summaries.",
+    }
+    return descriptions[role_key]
 
 
 def sync_state_to_config(state: ExperimentState, config: SimulationConfig) -> None:
@@ -458,12 +547,14 @@ def step_simulation(steps: int, config: SimulationConfig) -> None:
         try:
             from xsim.llm import LLMConfig
 
+            role = config.model_roles["agent_decisions"]
             llm_cfg = LLMConfig(
-                provider=config.model_provider,
-                model=config.model_name,
-                base_url=config.api_base_url,
-                api_key=config.api_key,
-                temperature=config.temperature,
+                provider=role.provider,
+                model=role.model_name,
+                base_url=role.api_base_url,
+                api_key=role.api_key,
+                temperature=role.temperature,
+                max_tokens=role.max_tokens,
             )
             engine.set_behavior(LLMAgentBehavior(llm_config=llm_cfg))
         except Exception:
@@ -721,6 +812,22 @@ def render_tuning(config: SimulationConfig) -> None:
         }
     )
     st.caption("Change ranking controls from the sidebar, then return to Feed Lab to see the ordering shift.")
+    st.markdown('<div class="section-title">Model Role Assignments</div>', unsafe_allow_html=True)
+    st.dataframe(
+        [
+            {
+                "role": role_name.replace("_", " "),
+                "enabled": role.enabled,
+                "provider": role.provider,
+                "model": role.model_name,
+                "temperature": role.temperature,
+                "max_tokens": role.max_tokens,
+            }
+            for role_name, role in config.model_roles.items()
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
     if state.ticks:
         st.markdown('<div class="section-title">Tick History</div>', unsafe_allow_html=True)
         for record in reversed(state.ticks[-10:]):

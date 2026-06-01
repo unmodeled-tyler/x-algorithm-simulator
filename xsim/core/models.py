@@ -79,6 +79,53 @@ class Scenario:
 
 
 @dataclass
+class ModelRoleConfig:
+    """LLM settings for one simulation role."""
+
+    provider: str = "ollama"
+    model_name: str = "qwen2.5:7b"
+    api_base_url: str | None = None
+    api_key: str | None = None
+    temperature: float = 0.7
+    max_tokens: int = 600
+    enabled: bool = False
+
+
+def default_model_roles() -> dict[str, ModelRoleConfig]:
+    """Default model assignments for the roles xsim knows about."""
+    return {
+        "agent_decisions": ModelRoleConfig(
+            provider="ollama",
+            model_name="qwen2.5:7b",
+            temperature=0.7,
+            max_tokens=600,
+            enabled=False,
+        ),
+        "scenario_reactions": ModelRoleConfig(
+            provider="ollama",
+            model_name="qwen2.5:7b",
+            temperature=0.8,
+            max_tokens=500,
+            enabled=False,
+        ),
+        "ranking_assistant": ModelRoleConfig(
+            provider="ollama",
+            model_name="qwen2.5:7b",
+            temperature=0.2,
+            max_tokens=400,
+            enabled=False,
+        ),
+        "analytics_summary": ModelRoleConfig(
+            provider="ollama",
+            model_name="qwen2.5:7b",
+            temperature=0.4,
+            max_tokens=700,
+            enabled=False,
+        ),
+    }
+
+
+@dataclass
 class SimulationConfig:
     """Controllable parameters for the current run."""
     num_agents: int = 20
@@ -86,6 +133,7 @@ class SimulationConfig:
     model_name: str = "qwen2.5:7b"          # or "gpt-4o-mini", "llama3", etc.
     api_base_url: str | None = None         # For OpenAI-compatible endpoints
     api_key: str | None = None
+    model_roles: dict[str, ModelRoleConfig] = field(default_factory=default_model_roles)
 
     # Algorithm knobs (these will drive the ranker)
     in_network_weight: float = 1.0

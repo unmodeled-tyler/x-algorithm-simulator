@@ -14,6 +14,7 @@ The current prototype is intentionally small, but it is runnable:
 - Tracks analytics like scenario reach, top amplifiers, topic spread, feed diversity, and tick activity.
 - Exports/imports complete run JSON so experiments can be replayed.
 - Compares baseline vs variant ranking configs from the same starting society and scenario.
+- Provides role-based model settings for agent decisions, scenario reactions, ranking assistance, and analytics summaries.
 
 That gives the project a working baseline before adding LLM-backed behavior.
 

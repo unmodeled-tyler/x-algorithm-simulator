@@ -19,9 +19,11 @@ from typing import Iterable, Iterator
 from xsim.core.models import (
     Agent,
     Engagement,
+    ModelRoleConfig,
     Post,
     Scenario,
     SimulationConfig,
+    default_model_roles,
 )
 
 
@@ -143,6 +145,9 @@ class ExperimentState:
         """Serialize the complete experiment to a JSON-friendly dictionary."""
         config = asdict(self.config)
         config["api_key"] = None
+        for role in config.get("model_roles", {}).values():
+            if isinstance(role, dict):
+                role["api_key"] = None
         return {
             "schema_version": 1,
             "config": config,
@@ -194,6 +199,7 @@ def _config_from_dict(data: dict[str, object]) -> SimulationConfig:
         model_name=str(data.get("model_name") or "qwen2.5:7b"),
         api_base_url=_optional_str(data.get("api_base_url")),
         api_key=_optional_str(data.get("api_key")),
+        model_roles=_role_models_from_dict(data.get("model_roles")),
         in_network_weight=_float_from_json(data.get("in_network_weight"), 1.0),
         discovery_weight=_float_from_json(data.get("discovery_weight"), 0.8),
         author_diversity_penalty=_float_from_json(
@@ -210,6 +216,29 @@ def _config_from_dict(data: dict[str, object]) -> SimulationConfig:
         max_posts_per_agent_per_step=_int_from_json(
             data.get("max_posts_per_agent_per_step"), 1
         ),
+    )
+
+
+def _role_models_from_dict(data: object) -> dict[str, ModelRoleConfig]:
+    defaults = default_model_roles()
+    if data is None:
+        return defaults
+    payload = _expect_dict(data)
+    for role_name, role_data in payload.items():
+        defaults[str(role_name)] = _role_model_from_dict(role_data)
+    return defaults
+
+
+def _role_model_from_dict(data: object) -> ModelRoleConfig:
+    payload = _expect_dict(data)
+    return ModelRoleConfig(
+        provider=str(payload.get("provider") or "ollama"),
+        model_name=str(payload.get("model_name") or "qwen2.5:7b"),
+        api_base_url=_optional_str(payload.get("api_base_url")),
+        api_key=_optional_str(payload.get("api_key")),
+        temperature=_float_from_json(payload.get("temperature"), 0.7),
+        max_tokens=_int_from_json(payload.get("max_tokens"), 600),
+        enabled=_bool_from_json(payload.get("enabled"), False),
     )
 
 
@@ -374,3 +403,13 @@ def _optional_str(value: object) -> str | None:
         return None
     text = str(value)
     return text or None
+
+
+def _bool_from_json(value: object, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int | float):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
