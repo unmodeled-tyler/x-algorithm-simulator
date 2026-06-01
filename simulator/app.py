@@ -89,8 +89,44 @@ APP_CSS = """
         padding: 0.9rem 1rem;
     }
 
-    div[data-testid="stTabs"] button {
-        font-weight: 650;
+    div[data-testid="stTabs"] div[role="tablist"] {
+        gap: 0.35rem;
+        border-bottom: 1px solid var(--xsim-border);
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] {
+        background: #eee9de;
+        border: 1px solid var(--xsim-border);
+        border-bottom: 0;
+        border-radius: 8px 8px 0 0;
+        color: var(--xsim-ink);
+        font-weight: 700;
+        padding: 0.55rem 0.9rem;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] p {
+        color: var(--xsim-ink);
+        font-weight: 700;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        background: var(--xsim-panel);
+        border-color: var(--xsim-accent);
+        box-shadow: inset 0 3px 0 var(--xsim-accent);
+    }
+
+    div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] p {
+        color: var(--xsim-accent);
+    }
+
+    div[data-testid="stTabs"] button[role="tab"]:hover {
+        background: var(--xsim-soft);
+        border-color: #b7d6cf;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"]:focus-visible {
+        outline: 2px solid var(--xsim-accent);
+        outline-offset: 2px;
     }
 
     .hero {
