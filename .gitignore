@@ -1,1 +1,46 @@
+# Byte-compiled / optimized
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Simulation / ML artifacts
+*.gguf
+models/
+ollama/
+.huggingface/
+.cache/
+*.npz
+artifacts/
+
+# Simulation outputs
+sim_outputs/
+*.log
+runs/
+
+# Tooling the user has
+.claude/*
+.gitnexus/*
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Python packaging
+*.egg-info/
+dist/
+build/
