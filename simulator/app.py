@@ -9,7 +9,6 @@ Run with:
 from __future__ import annotations
 
 import sys
-from collections import Counter
 from html import escape
 from pathlib import Path
 
@@ -22,11 +21,12 @@ import streamlit as st
 try:
     from xsim.core import (
         Agent,
+        DeterministicBehavior,
+        ExperimentState,
         FeedItem,
-        Scenario,
+        LLMAgentBehavior,
         SimulationConfig,
-        create_default_agents,
-        generate_scenario_posts,
+        SimulationEngine,
         infer_topics,
         rank_feed,
     )
@@ -235,16 +235,24 @@ APP_CSS = """
 
 
 def init_state() -> None:
-    defaults = {
-        "agents": [],
-        "posts": [],
-        "events": [],
-        "selected_agent_id": None,
-        "last_reaction_count": 0,
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+    """Initialize a single ExperimentState object in st.session_state."""
+    if "experiment" not in st.session_state:
+        # Bootstrap a minimal state; the real config is filled in once the
+        # sidebar renders.
+        st.session_state["experiment"] = ExperimentState(
+            config=SimulationConfig(num_agents=20, random_seed=42)
+        )
+        st.session_state["engine"] = SimulationEngine(st.session_state["experiment"])
+        st.session_state["selected_agent_id"] = None
+        st.session_state["use_llm"] = False
+
+
+def get_state() -> ExperimentState:
+    return st.session_state["experiment"]  # type: ignore[no-any-return]
+
+
+def get_engine() -> SimulationEngine:
+    return st.session_state["engine"]  # type: ignore[no-any-return]
 
 
 def build_config() -> SimulationConfig:
@@ -262,6 +270,16 @@ def build_config() -> SimulationConfig:
 
         st.divider()
         with st.expander("LLM backend", expanded=False):
+            use_llm = st.checkbox(
+                "Enable LLM-backed agents",
+                value=st.session_state.get("use_llm", False),
+                help=(
+                    "If disabled (default), agents use the local deterministic "
+                    "behavior. Enabling this routes decisions through xsim.llm "
+                    "and silently falls back to deterministic on failure."
+                ),
+            )
+            st.session_state["use_llm"] = use_llm
             provider = st.selectbox("Provider", ["ollama", "openai_compatible"], index=0)
             if provider == "ollama":
                 model_name = st.text_input("Ollama model", value="qwen2.5:7b")
@@ -295,16 +313,21 @@ def build_config() -> SimulationConfig:
     )
 
 
-def render_stage_rail() -> None:
-    agents_ready = bool(st.session_state.agents)
-    event_ready = bool(st.session_state.events)
-    posts_ready = bool(st.session_state.posts)
-    feed_ready = agents_ready and posts_ready
+def sync_state_to_config(state: ExperimentState, config: SimulationConfig) -> None:
+    """Push the sidebar config into the ExperimentState (and re-apply to engine)."""
+    state.config = config
+
+
+def render_stage_rail(state: ExperimentState) -> None:
+    agents_ready = bool(state.agents)
+    event_ready = bool(state.scenarios)
+    posts_ready = bool(state.posts)
+    ticks_ready = bool(state.ticks)
     stages = [
         ("01", "Build society", "Create agents and social graph", agents_ready),
         ("02", "Inject event", "Add a shock to the world", event_ready),
         ("03", "Observe spread", "Watch first-wave reactions", posts_ready),
-        ("04", "Tune feed", "Inspect ranked timelines", feed_ready),
+        ("04", "Step simulation", f"Run ticks ({state.current_tick} done)", ticks_ready),
     ]
     columns = st.columns(4)
     for column, (label, title, note, active) in zip(columns, stages, strict=True):
@@ -352,36 +375,59 @@ def render_agent(agent: Agent) -> None:
 
 
 def initialize_agents(config: SimulationConfig) -> None:
-    st.session_state.agents = create_default_agents(config.num_agents, config.random_seed)
-    st.session_state.posts = []
-    st.session_state.events = []
-    st.session_state.last_reaction_count = 0
-    st.session_state.selected_agent_id = st.session_state.agents[0].id
+    state = get_state()
+    state.reset_society()
+    sync_state_to_config(state, config)
+    engine = get_engine()
+    engine.attach_state(state)
+    engine.populate_society()
+    if state.agents:
+        st.session_state["selected_agent_id"] = state.agents[0].id
 
 
 def inject_scenario(description: str, config: SimulationConfig) -> None:
-    if not st.session_state.agents:
-        initialize_agents(config)
-    scenario = Scenario(description=description)
-    new_posts = generate_scenario_posts(st.session_state.agents, scenario, config)
-    st.session_state.events.append(scenario)
-    st.session_state.posts.extend(new_posts)
-    st.session_state.last_reaction_count = len(new_posts)
+    state = get_state()
+    sync_state_to_config(state, config)
+    engine = get_engine()
+    engine.attach_state(state)
+    if not state.agents:
+        engine.populate_society()
+    engine.inject_scenario(description)
 
 
-def topic_counts() -> Counter[str]:
-    counts: Counter[str] = Counter()
-    for post in st.session_state.posts:
-        counts.update(post.topic_tags)
-    return counts
+def step_simulation(steps: int, config: SimulationConfig) -> None:
+    state = get_state()
+    sync_state_to_config(state, config)
+    engine = get_engine()
+    engine.attach_state(state)
+    if not state.agents:
+        engine.populate_society()
+    if st.session_state.get("use_llm", False):
+        try:
+            from xsim.llm import LLMConfig
+
+            llm_cfg = LLMConfig(
+                provider=config.model_provider,
+                model=config.model_name,
+                base_url=config.api_base_url,
+                api_key=config.api_key,
+                temperature=config.temperature,
+            )
+            engine.set_behavior(LLMAgentBehavior(llm_config=llm_cfg))
+        except Exception:
+            engine.set_behavior(DeterministicBehavior())
+    else:
+        engine.set_behavior(DeterministicBehavior())
+    engine.run(steps=steps)
 
 
 def render_overview(config: SimulationConfig) -> None:
+    state = get_state()
     metric_cols = st.columns(4)
-    metric_cols[0].metric("Agents", len(st.session_state.agents))
-    metric_cols[1].metric("Injected events", len(st.session_state.events))
-    metric_cols[2].metric("Posts generated", len(st.session_state.posts))
-    metric_cols[3].metric("Last reaction wave", st.session_state.last_reaction_count)
+    metric_cols[0].metric("Agents", len(state.agents))
+    metric_cols[1].metric("Injected events", len(state.scenarios))
+    metric_cols[2].metric("Posts generated", len(state.posts))
+    metric_cols[3].metric("Ticks completed", state.current_tick)
 
     left, right = st.columns([1.2, 0.8], gap="large")
     with left:
@@ -394,6 +440,7 @@ def render_overview(config: SimulationConfig) -> None:
             ),
             height=128,
             label_visibility="collapsed",
+            key="scenario_text",
         )
         actions = st.columns([1, 1, 1])
         if actions[0].button("Create Society", type="secondary", use_container_width=True):
@@ -408,14 +455,42 @@ def render_overview(config: SimulationConfig) -> None:
             inject_scenario(scenario_text.strip(), config)
             st.rerun()
         if actions[2].button("Clear Posts", use_container_width=True):
-            st.session_state.posts = []
-            st.session_state.events = []
-            st.session_state.last_reaction_count = 0
+            state.clear_posts()
             st.rerun()
 
-        if st.session_state.posts:
+        # Step Simulation row.
+        step_cols = st.columns([1, 1, 1])
+        steps_to_run = step_cols[0].number_input(
+            "Ticks",
+            min_value=1,
+            max_value=20,
+            value=1,
+            step=1,
+            label_visibility="collapsed",
+        )
+        if step_cols[1].button(
+            "Step Simulation",
+            type="primary",
+            disabled=not state.agents,
+            use_container_width=True,
+        ):
+            step_simulation(int(steps_to_run), config)
+            st.rerun()
+        last_tick = state.ticks[-1] if state.ticks else None
+        last_summary = (
+            f"Last tick: +{last_tick.notes.get('new_posts', 0)} posts, "
+            f"+{last_tick.notes.get('engagements', 0)} actions"
+            if last_tick
+            else "No ticks yet."
+        )
+        step_cols[2].markdown(
+            f"<div style='text-align:center;color:var(--xsim-muted);font-size:0.85rem;padding-top:0.6rem'>{escape(last_summary)}</div>",
+            unsafe_allow_html=True,
+        )
+
+        if state.posts:
             st.markdown('<div class="section-title">Latest Reactions</div>', unsafe_allow_html=True)
-            for post in reversed(st.session_state.posts[-5:]):
+            for post in reversed(state.posts[-5:]):
                 render_post(
                     None,
                     post.author_username or post.author_id,
@@ -436,8 +511,8 @@ def render_overview(config: SimulationConfig) -> None:
 
     with right:
         st.markdown('<div class="section-title">Signal Summary</div>', unsafe_allow_html=True)
-        if st.session_state.events:
-            latest = st.session_state.events[-1]
+        if state.scenarios:
+            latest = state.scenarios[-1]
             inferred = infer_topics(latest.description)
             st.markdown(
                 f"""
@@ -462,15 +537,23 @@ def render_overview(config: SimulationConfig) -> None:
                 unsafe_allow_html=True,
             )
 
-        counts = topic_counts()
+        counts = state.topic_counts()
         if counts:
             st.bar_chart(dict(counts.most_common(8)), height=220)
         else:
             st.caption("Topic distribution appears after posts are generated.")
 
+        if state.engagements:
+            st.markdown(
+                "<div class='stage-label'>Engagement mix</div>",
+                unsafe_allow_html=True,
+            )
+            st.bar_chart(dict(state.engagement_counts().most_common()), height=180)
+
 
 def render_feed_lab(config: SimulationConfig) -> None:
-    if not st.session_state.agents:
+    state = get_state()
+    if not state.agents:
         st.markdown(
             """
             <div class="empty-state">
@@ -482,7 +565,7 @@ def render_feed_lab(config: SimulationConfig) -> None:
         )
         return
 
-    if not st.session_state.posts:
+    if not state.posts:
         st.markdown(
             """
             <div class="empty-state">
@@ -494,15 +577,18 @@ def render_feed_lab(config: SimulationConfig) -> None:
         )
         return
 
-    agent_lookup = {agent.id: agent for agent in st.session_state.agents}
+    agent_lookup = state.agent_index()
+    options = list(agent_lookup.keys())
+    if st.session_state.get("selected_agent_id") not in options:
+        st.session_state["selected_agent_id"] = options[0]
     selected_id = st.selectbox(
         "Inspect feed as",
-        options=[agent.id for agent in st.session_state.agents],
+        options=options,
         format_func=lambda agent_id: f"@{agent_lookup[agent_id].username}",
         key="selected_agent_id",
     )
     viewer = agent_lookup[selected_id]
-    ranked_feed = rank_feed(viewer, st.session_state.posts, config)
+    ranked_feed = rank_feed(viewer, state.posts, config)
 
     profile, feed = st.columns([0.8, 1.4], gap="large")
     with profile:
@@ -523,7 +609,8 @@ def render_feed_lab(config: SimulationConfig) -> None:
 
 
 def render_society() -> None:
-    if not st.session_state.agents:
+    state = get_state()
+    if not state.agents:
         st.markdown(
             """
             <div class="empty-state">
@@ -537,12 +624,13 @@ def render_society() -> None:
 
     st.markdown('<div class="section-title">Agent Society</div>', unsafe_allow_html=True)
     columns = st.columns(2)
-    for index, agent in enumerate(st.session_state.agents):
+    for index, agent in enumerate(state.agents):
         with columns[index % 2]:
             render_agent(agent)
 
 
 def render_tuning(config: SimulationConfig) -> None:
+    state = get_state()
     st.markdown('<div class="section-title">Current Ranking Model</div>', unsafe_allow_html=True)
     st.json(
         {
@@ -552,13 +640,33 @@ def render_tuning(config: SimulationConfig) -> None:
             "reply_boost": config.reply_boost,
             "random_seed": config.random_seed,
             "llm_backend": f"{config.model_provider} / {config.model_name}",
+            "behavior": "LLMAgentBehavior" if st.session_state.get("use_llm") else "DeterministicBehavior",
         }
     )
     st.caption("Change ranking controls from the sidebar, then return to Feed Lab to see the ordering shift.")
+    if state.ticks:
+        st.markdown('<div class="section-title">Tick History</div>', unsafe_allow_html=True)
+        for record in reversed(state.ticks[-10:]):
+            st.markdown(
+                f"""
+                <div class="event-card">
+                    <div class="stage-label">Tick {record.index}</div>
+                    <div class="body-text">
+                        {record.notes.get('new_posts', 0)} new posts ·
+                        {record.notes.get('engagements', 0)} actions ·
+                        {record.notes.get('agents', 0)} agents
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
 
 init_state()
 config = build_config()
+
+# Keep the ExperimentState in sync with the sidebar config.
+sync_state_to_config(get_state(), config)
 
 st.markdown(APP_CSS, unsafe_allow_html=True)
 st.markdown(
@@ -575,7 +683,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-render_stage_rail()
+render_stage_rail(get_state())
 
 overview_tab, feed_tab, society_tab, tuning_tab = st.tabs(
     ["Overview", "Feed Lab", "Society", "Tuning"]

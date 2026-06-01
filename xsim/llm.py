@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 import ollama
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
 
 @dataclass
@@ -31,15 +32,15 @@ class LLMConfig:
 
 
 class LLMClient(Protocol):
-    def chat(self, system: str, user: str, **kwargs) -> str: ...
+    def chat(self, system: str, user: str, **kwargs: object) -> str: ...
 
 
 class OllamaClient:
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig) -> None:
         self.config = config
         self.client = ollama
 
-    def chat(self, system: str, user: str, **kwargs) -> str:
+    def chat(self, system: str, user: str, **kwargs: object) -> str:
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -52,21 +53,21 @@ class OllamaClient:
                 "num_predict": self.config.max_tokens,
             },
         )
-        return response["message"]["content"].strip()
+        return cast(str, response["message"]["content"]).strip()
 
 
 class OpenAICompatibleClient:
     """Works with OpenAI, Groq, Together, OpenRouter, Fireworks, local vLLM, etc."""
 
-    def __init__(self, config: LLMConfig):
+    def __init__(self, config: LLMConfig) -> None:
         self.config = config
         self.client = OpenAI(
             base_url=config.base_url or "https://api.openai.com/v1",
             api_key=config.api_key or os.getenv("OPENAI_API_KEY"),
         )
 
-    def chat(self, system: str, user: str, **kwargs) -> str:
-        messages = [
+    def chat(self, system: str, user: str, **kwargs: object) -> str:
+        messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
@@ -76,7 +77,7 @@ class OpenAICompatibleClient:
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
         )
-        return resp.choices[0].message.content.strip()
+        return (resp.choices[0].message.content or "").strip()
 
 
 def get_llm_client(config: LLMConfig) -> LLMClient:

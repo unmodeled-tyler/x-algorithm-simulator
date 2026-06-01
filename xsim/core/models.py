@@ -75,7 +75,7 @@ class Scenario:
     id: str = field(default_factory=lambda: str(uuid4()))
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     # Optional structured fields later (e.g. economic impact, political leaning, etc.)
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass

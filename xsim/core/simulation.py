@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from typing import cast
 
 from xsim.core.models import Agent, FeedItem, Post, Scenario, SimulationConfig
 
 
-ARCHETYPES: tuple[dict[str, object], ...] = (
+ARCHETYPES: tuple[dict[str, str | list[str]], ...] = (
     {
         "username": "alex_green",
         "persona": "Left-leaning environmentalist who works in renewables and posts about climate policy.",
@@ -109,12 +110,13 @@ def create_default_agents(count: int, seed: int | None = 42) -> list[Agent]:
     for index in range(count):
         archetype = ARCHETYPES[index % len(ARCHETYPES)]
         suffix = index // len(ARCHETYPES) + 1
-        username = f"{archetype['username']}_{suffix}" if suffix > 1 else str(archetype["username"])
+        base_username = cast(str, archetype["username"])
+        username = f"{base_username}_{suffix}" if suffix > 1 else base_username
         agents.append(
             Agent(
                 username=username,
-                persona=str(archetype["persona"]),
-                interests=list(archetype["interests"]),  # type: ignore[arg-type]
+                persona=cast(str, archetype["persona"]),
+                interests=list(cast(list[str], archetype["interests"])),
             )
         )
 
