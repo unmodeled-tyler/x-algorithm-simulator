@@ -13,6 +13,7 @@ The current prototype is intentionally small, but it is runnable:
 - Shows why each post ranked where it did: topic match, network/discovery boost, recency, social proof, reply boost, negative feedback, and author diversity.
 - Tracks analytics like scenario reach, top amplifiers, topic spread, feed diversity, and tick activity.
 - Exports/imports complete run JSON so experiments can be replayed.
+- Compares baseline vs variant ranking configs from the same starting society and scenario.
 
 That gives the project a working baseline before adding LLM-backed behavior.
 
@@ -34,6 +35,7 @@ The goal is to make the platform itself the experiment surface, not just a ranki
 - `xsim/core/behavior.py` - deterministic and optional LLM-backed agent behavior.
 - `xsim/core/simulation.py` - starter society, scenario reaction, topic inference, ranking.
 - `xsim/core/analytics.py` - reach, amplifier, topic-spread, and feed-diversity analytics.
+- `xsim/core/comparison.py` - baseline vs variant experiment cloning and comparison metrics.
 - `xsim/llm.py` - LLM abstraction for Ollama and OpenAI-compatible providers.
 - `simulator/app.py` - Streamlit experiment cockpit.
 - `references/` - copied architecture reference material from X-style systems. These files are not required to run xsim and are excluded from active lint/test loops.
@@ -70,11 +72,11 @@ The deterministic simulation should stay available as the baseline. LLMs should 
 
 ## Next Milestones
 
-1. Add side-by-side experiment comparison: same society/scenario, different ranking configs.
-2. Add richer network visualization for follow edges, amplification paths, and topic clusters.
-3. Expand behavior policies so deterministic agents can have distinct temperaments, not just personas.
-4. Add optional LLM batch generation with caching so high-quality runs stay affordable.
-5. Add scenario templates and seed presets for repeatable demos.
+1. Add richer network visualization for follow edges, amplification paths, and topic clusters.
+2. Expand behavior policies so deterministic agents can have distinct temperaments, not just personas.
+3. Add optional LLM batch generation with caching so high-quality runs stay affordable.
+4. Add scenario templates and seed presets for repeatable demos.
+5. Add saved comparison reports so baseline/variant outcomes can be shared directly.
 
 ## Design Principles
 

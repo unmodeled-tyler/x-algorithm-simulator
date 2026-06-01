@@ -1694,6 +1694,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "mypy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -1713,6 +1714,7 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "mypy" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.4" },
 ]

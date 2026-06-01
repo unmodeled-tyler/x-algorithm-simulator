@@ -16,6 +16,13 @@ from .behavior import (
     LLMAgentBehavior,
     materialize_actions,
 )
+from .comparison import (
+    ComparisonMetrics,
+    ExperimentComparison,
+    clone_experiment_state,
+    run_comparison,
+    summarize_comparison_branch,
+)
 from .engine import SimulationEngine, TickResult
 from .models import Agent, Engagement, FeedItem, Post, Scenario, SimulationConfig
 from .simulation import (
@@ -30,8 +37,10 @@ __all__ = [
     "Action",
     "Agent",
     "Behavior",
+    "ComparisonMetrics",
     "DeterministicBehavior",
     "Engagement",
+    "ExperimentComparison",
     "ExperimentState",
     "FeedDiversity",
     "FeedItem",
@@ -43,6 +52,7 @@ __all__ = [
     "SimulationEngine",
     "TickRecord",
     "TickResult",
+    "clone_experiment_state",
     "create_default_agents",
     "feed_diversity",
     "feed_diversity_from_items",
@@ -51,6 +61,8 @@ __all__ = [
     "materialize_actions",
     "rank_feed",
     "reach_summary",
+    "run_comparison",
+    "summarize_comparison_branch",
     "tick_activity_rows",
     "top_amplifiers",
     "topic_author_matrix",

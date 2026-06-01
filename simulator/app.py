@@ -9,6 +9,7 @@ Run with:
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from html import escape
 from pathlib import Path
 
@@ -31,6 +32,7 @@ try:
         infer_topics,
         rank_feed,
         reach_summary,
+        run_comparison,
         tick_activity_rows,
         top_amplifiers,
         topic_author_matrix,
@@ -808,6 +810,180 @@ def render_analytics() -> None:
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
+def render_compare(config: SimulationConfig) -> None:
+    state = get_state()
+    st.markdown('<div class="section-title">Experiment Comparison</div>', unsafe_allow_html=True)
+
+    if not state.agents or not state.posts:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <strong>Comparison needs a live run.</strong><br>
+                Create a society and inject a scenario first. Then this tab can clone the run into baseline and variant branches.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.caption(
+        "Both branches start from the current run state. Baseline uses the sidebar config; "
+        "Variant uses the controls below."
+    )
+    setup_cols = st.columns([0.7, 1.3], gap="large")
+    with setup_cols[0]:
+        compare_steps = st.number_input(
+            "Ticks to compare",
+            min_value=1,
+            max_value=50,
+            value=5,
+            step=1,
+        )
+        if st.button("Run Comparison", type="primary", use_container_width=True):
+            variant_config = _variant_config_from_widgets(config)
+            st.session_state["comparison"] = run_comparison(
+                state,
+                baseline_config=config,
+                variant_config=variant_config,
+                steps=int(compare_steps),
+            )
+            st.rerun()
+
+    with setup_cols[1]:
+        st.markdown('<div class="stage-label">Variant ranking config</div>', unsafe_allow_html=True)
+        _render_variant_controls(config)
+
+    comparison = st.session_state.get("comparison")
+    if comparison is None:
+        st.markdown(
+            """
+            <div class="empty-state">
+                <strong>No comparison run yet.</strong><br>
+                Set variant knobs and run a comparison to see deltas.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown('<div class="section-title">Outcome Delta</div>', unsafe_allow_html=True)
+    st.dataframe(comparison.metric_rows(), use_container_width=True, hide_index=True)
+
+    baseline_col, variant_col = st.columns(2, gap="large")
+    with baseline_col:
+        st.markdown('<div class="section-title">Baseline</div>', unsafe_allow_html=True)
+        _render_comparison_branch(comparison.baseline)
+        st.download_button(
+            "Download Baseline JSON",
+            data=comparison.baseline.to_json(),
+            file_name="xsim-baseline-comparison.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+    with variant_col:
+        st.markdown('<div class="section-title">Variant</div>', unsafe_allow_html=True)
+        _render_comparison_branch(comparison.variant)
+        st.download_button(
+            "Download Variant JSON",
+            data=comparison.variant.to_json(),
+            file_name="xsim-variant-comparison.json",
+            mime="application/json",
+            use_container_width=True,
+        )
+
+
+def _render_variant_controls(config: SimulationConfig) -> None:
+    cols = st.columns(2)
+    cols[0].slider(
+        "Variant in-network boost",
+        0.0,
+        2.0,
+        config.in_network_weight,
+        0.1,
+        key="compare_in_network_weight",
+    )
+    cols[1].slider(
+        "Variant discovery boost",
+        0.0,
+        2.0,
+        min(2.0, config.discovery_weight + 0.4),
+        0.1,
+        key="compare_discovery_weight",
+    )
+    cols[0].slider(
+        "Variant topic weight",
+        0.0,
+        2.0,
+        config.topic_match_weight,
+        0.05,
+        key="compare_topic_match_weight",
+    )
+    cols[1].slider(
+        "Variant diversity penalty",
+        0.0,
+        1.0,
+        config.author_diversity_penalty,
+        0.05,
+        key="compare_author_diversity_penalty",
+    )
+    cols[0].slider(
+        "Variant recency weight",
+        0.0,
+        1.5,
+        config.recency_weight,
+        0.05,
+        key="compare_recency_weight",
+    )
+    cols[1].slider(
+        "Variant social proof",
+        0.0,
+        1.0,
+        config.social_proof_weight,
+        0.02,
+        key="compare_social_proof_weight",
+    )
+
+
+def _variant_config_from_widgets(config: SimulationConfig) -> SimulationConfig:
+    return replace(
+        config,
+        in_network_weight=float(st.session_state.get("compare_in_network_weight", config.in_network_weight)),
+        discovery_weight=float(st.session_state.get("compare_discovery_weight", config.discovery_weight)),
+        topic_match_weight=float(st.session_state.get("compare_topic_match_weight", config.topic_match_weight)),
+        author_diversity_penalty=float(
+            st.session_state.get(
+                "compare_author_diversity_penalty",
+                config.author_diversity_penalty,
+            )
+        ),
+        recency_weight=float(st.session_state.get("compare_recency_weight", config.recency_weight)),
+        social_proof_weight=float(
+            st.session_state.get("compare_social_proof_weight", config.social_proof_weight)
+        ),
+    )
+
+
+def _render_comparison_branch(branch: ExperimentState) -> None:
+    reach = reach_summary(branch)
+    cols = st.columns(3)
+    cols[0].metric("Posts", len(branch.posts))
+    cols[1].metric("Engagements", len(branch.engagements))
+    cols[2].metric("Reach", f"{reach.reach_ratio:.0%}")
+
+    activity = tick_activity_rows(branch)
+    if activity:
+        st.line_chart(activity, x="tick", y=["new_posts", "engagements"], height=220)
+
+    amplifiers = top_amplifiers(branch, limit=5)
+    if amplifiers:
+        st.dataframe(
+            [{"agent": f"@{agent.username}", "score": score} for agent, score in amplifiers],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 init_state()
 config = build_config()
 
@@ -831,8 +1007,8 @@ st.markdown(
 )
 render_stage_rail(get_state())
 
-overview_tab, feed_tab, society_tab, analytics_tab, tuning_tab = st.tabs(
-    ["Overview", "Feed Lab", "Society", "Analytics", "Tuning"]
+overview_tab, feed_tab, society_tab, analytics_tab, compare_tab, tuning_tab = st.tabs(
+    ["Overview", "Feed Lab", "Society", "Analytics", "Compare", "Tuning"]
 )
 
 with overview_tab:
@@ -846,6 +1022,9 @@ with society_tab:
 
 with analytics_tab:
     render_analytics()
+
+with compare_tab:
+    render_compare(config)
 
 with tuning_tab:
     render_tuning(config)

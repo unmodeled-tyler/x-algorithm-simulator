@@ -26,6 +26,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "mypy",
     "pytest>=8.0",
     "ruff>=0.4",
 ]
