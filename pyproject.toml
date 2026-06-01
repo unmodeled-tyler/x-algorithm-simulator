@@ -33,11 +33,7 @@ dev = [
 [tool.ruff]
 line-length = 100
 extend-exclude = [
-    "candidate-pipeline",
-    "grox",
-    "home-mixer",
-    "phoenix",
-    "thunder",
+    "references",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -51,7 +47,6 @@ testpaths = ["tests"]
 python_version = "3.11"
 strict = true
 
-# Note on phoenix/
-# The phoenix/ directory contains a self-contained reference implementation
-# of a miniature Grok-based recsys (JAX). It is kept for architectural inspiration
-# but is not required to run the main xsim simulator.
+# Note on references/
+# The references/ directory contains copied architecture references from X-style
+# feed systems. They are intentionally excluded from active xsim lint/test loops.

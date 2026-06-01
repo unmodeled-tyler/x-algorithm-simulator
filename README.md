@@ -8,9 +8,11 @@ The current prototype is intentionally small, but it is runnable:
 
 - Creates a reproducible society of synthetic agents with personas, interests, and follow edges.
 - Lets you inject a scenario, such as a fuel price shock or policy announcement.
-- Generates a first wave of deterministic agent reactions.
-- Ranks posts for an individual agent using live algorithm knobs.
-- Shows why each post ranked where it did: topic match, in-network boost, discovery boost, reply boost, and author diversity penalty.
+- Generates a first wave of agent reactions, then advances the world through simulation ticks.
+- Ranks posts for an individual agent using live algorithm knobs and per-score breakdowns.
+- Shows why each post ranked where it did: topic match, network/discovery boost, recency, social proof, reply boost, negative feedback, and author diversity.
+- Tracks analytics like scenario reach, top amplifiers, topic spread, feed diversity, and tick activity.
+- Exports/imports complete run JSON so experiments can be replayed.
 
 That gives the project a working baseline before adding LLM-backed behavior.
 
@@ -27,10 +29,14 @@ The goal is to make the platform itself the experiment surface, not just a ranki
 ## Repository Map
 
 - `xsim/core/models.py` - simulation data types: agents, posts, scenarios, engagements, feed items.
-- `xsim/core/simulation.py` - deterministic starter society, scenario reaction, topic inference, ranking.
-- `xsim/llm.py` - LLM abstraction for Ollama and OpenAI-compatible providers. Not wired into the simulation loop yet.
-- `simulator/app.py` - Streamlit control panel and live visualization.
-- `phoenix/`, `home-mixer/`, `candidate-pipeline/`, `thunder/`, `grox/` - reference material from the X-style architecture this project draws from. These are not required to run the simulator.
+- `xsim/core/state.py` - complete experiment state plus JSON save/load.
+- `xsim/core/engine.py` - multi-tick simulation runner.
+- `xsim/core/behavior.py` - deterministic and optional LLM-backed agent behavior.
+- `xsim/core/simulation.py` - starter society, scenario reaction, topic inference, ranking.
+- `xsim/core/analytics.py` - reach, amplifier, topic-spread, and feed-diversity analytics.
+- `xsim/llm.py` - LLM abstraction for Ollama and OpenAI-compatible providers.
+- `simulator/app.py` - Streamlit experiment cockpit.
+- `references/` - copied architecture reference material from X-style systems. These files are not required to run xsim and are excluded from active lint/test loops.
 
 ## Run It
 
@@ -44,7 +50,7 @@ pip install -e ".[dev]"
 streamlit run simulator/app.py
 ```
 
-The app opens with a sidebar for simulation and ranking controls. Start by clicking **Initialize / Re-roll Agents**, then inject a scenario.
+The app opens with a collapsed sidebar for simulation and ranking controls. Start by creating a society, injecting a scenario, then stepping the simulation.
 
 ## Development
 
@@ -64,12 +70,11 @@ The deterministic simulation should stay available as the baseline. LLMs should 
 
 ## Next Milestones
 
-1. Add an experiment state object that owns agents, posts, scenarios, and engagements instead of storing loose lists in Streamlit session state.
-2. Replace template-based scenario reactions with optional LLM-generated posts behind the existing `xsim.llm` abstraction.
-3. Add per-step simulation ticks: agents read ranked feeds, decide whether to engage, and optionally create replies or quotes.
-4. Add network analytics: top amplifiers, topic spread, feed diversity, polarization/cluster views, and scenario reach.
-5. Add run export/import so experiments are reproducible and shareable.
-6. Split the reference architecture directories into documented reference assets or move them under a clear `references/` folder.
+1. Add side-by-side experiment comparison: same society/scenario, different ranking configs.
+2. Add richer network visualization for follow edges, amplification paths, and topic clusters.
+3. Expand behavior policies so deterministic agents can have distinct temperaments, not just personas.
+4. Add optional LLM batch generation with caching so high-quality runs stay affordable.
+5. Add scenario templates and seed presets for repeatable demos.
 
 ## Design Principles
 

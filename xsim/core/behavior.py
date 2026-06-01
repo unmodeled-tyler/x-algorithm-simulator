@@ -265,12 +265,13 @@ def materialize_actions(
             agent.memory.append(action.post_id)
 
             if action.action == "reply" and action.text:
+                parent = state.post_by_id(action.post_id)
                 reply = Post(
                     author_id=agent.id,
                     author_username=agent.username,
                     text=action.text,
                     reply_to_id=action.post_id,
-                    topic_tags=[],
+                    topic_tags=list(parent.topic_tags) if parent else [],
                 )
                 new_posts.append(reply)
                 state.add_posts([reply])

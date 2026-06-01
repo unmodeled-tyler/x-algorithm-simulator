@@ -93,6 +93,10 @@ class SimulationConfig:
     author_diversity_penalty: float = 0.65
     reply_boost: float = 1.8
     negative_action_penalty: float = 2.5
+    topic_match_weight: float = 0.85
+    recency_weight: float = 0.35
+    social_proof_weight: float = 0.22
+    feed_diversity_window: int = 4
 
     temperature: float = 0.7
     random_seed: int | None = 42
@@ -107,3 +111,4 @@ class FeedItem:
     post: Post
     score: float
     reason: str | None = None   # e.g. "Strong match with your recent interests"
+    score_breakdown: dict[str, float] = field(default_factory=dict)

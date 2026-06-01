@@ -84,7 +84,13 @@ class SimulationEngine:
         config = self.state.config
 
         for agent in self.state.agents:
-            feed = rank_feed(agent, self.state.posts, config, limit=20)
+            feed = rank_feed(
+                agent,
+                self.state.posts,
+                config,
+                limit=20,
+                engagements=self.state.engagements,
+            )
             actions = self.behavior.decide(agent, feed, self.state, config)
             if not actions:
                 continue

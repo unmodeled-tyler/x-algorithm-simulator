@@ -27,8 +27,14 @@ try:
         LLMAgentBehavior,
         SimulationConfig,
         SimulationEngine,
+        feed_diversity_from_items,
         infer_topics,
         rank_feed,
+        reach_summary,
+        tick_activity_rows,
+        top_amplifiers,
+        topic_author_matrix,
+        topic_spread_by_tick,
     )
 except ModuleNotFoundError as e:
     st.error(
@@ -267,6 +273,10 @@ def build_config() -> SimulationConfig:
         discovery_weight = st.slider("Discovery boost", 0.0, 2.0, 0.8, 0.1)
         diversity_penalty = st.slider("Repeat-author penalty", 0.0, 1.0, 0.65, 0.05)
         reply_boost = st.slider("Reply multiplier", 0.5, 4.0, 1.8, 0.1)
+        topic_match_weight = st.slider("Topic-match weight", 0.0, 2.0, 0.85, 0.05)
+        recency_weight = st.slider("Recency weight", 0.0, 1.5, 0.35, 0.05)
+        social_proof_weight = st.slider("Social-proof weight", 0.0, 1.0, 0.22, 0.02)
+        negative_action_penalty = st.slider("Negative-action penalty", 0.0, 5.0, 2.5, 0.1)
 
         st.divider()
         with st.expander("LLM backend", expanded=False):
@@ -309,6 +319,10 @@ def build_config() -> SimulationConfig:
         discovery_weight=discovery_weight,
         author_diversity_penalty=diversity_penalty,
         reply_boost=reply_boost,
+        negative_action_penalty=negative_action_penalty,
+        topic_match_weight=topic_match_weight,
+        recency_weight=recency_weight,
+        social_proof_weight=social_proof_weight,
         random_seed=int(random_seed),
     )
 
@@ -428,6 +442,12 @@ def render_overview(config: SimulationConfig) -> None:
     metric_cols[1].metric("Injected events", len(state.scenarios))
     metric_cols[2].metric("Posts generated", len(state.posts))
     metric_cols[3].metric("Ticks completed", state.current_tick)
+    reach = reach_summary(state)
+    if reach.total_agents:
+        st.progress(
+            reach.reach_ratio,
+            text=f"Scenario reach: {reach.reached_agents}/{reach.total_agents} agents touched the story",
+        )
 
     left, right = st.columns([1.2, 0.8], gap="large")
     with left:
@@ -550,6 +570,15 @@ def render_overview(config: SimulationConfig) -> None:
             )
             st.bar_chart(dict(state.engagement_counts().most_common()), height=180)
 
+        amplifiers = top_amplifiers(state, limit=5)
+        if amplifiers:
+            st.markdown(
+                "<div class='stage-label'>Top amplifiers</div>",
+                unsafe_allow_html=True,
+            )
+            for agent, score in amplifiers:
+                st.caption(f"@{agent.username}: {score}")
+
 
 def render_feed_lab(config: SimulationConfig) -> None:
     state = get_state()
@@ -588,7 +617,8 @@ def render_feed_lab(config: SimulationConfig) -> None:
         key="selected_agent_id",
     )
     viewer = agent_lookup[selected_id]
-    ranked_feed = rank_feed(viewer, state.posts, config)
+    ranked_feed = rank_feed(viewer, state.posts, config, engagements=state.engagements)
+    diversity = feed_diversity_from_items(viewer, ranked_feed)
 
     profile, feed = st.columns([0.8, 1.4], gap="large")
     with profile:
@@ -596,6 +626,9 @@ def render_feed_lab(config: SimulationConfig) -> None:
         render_agent(viewer)
         st.metric("Following", len(viewer.following_ids))
         st.metric("Feed candidates", len(ranked_feed))
+        st.metric("Unique authors", diversity.unique_authors)
+        st.metric("Discovery mix", f"{diversity.discovery_ratio:.0%}")
+        st.metric("Topics visible", diversity.topic_count)
 
     with feed:
         st.markdown('<div class="section-title">Ranked Timeline</div>', unsafe_allow_html=True)
@@ -606,6 +639,8 @@ def render_feed_lab(config: SimulationConfig) -> None:
                 item.post.text,
                 (item.reason or "").split(","),
             )
+            with st.expander("Score breakdown", expanded=False):
+                st.json(item.score_breakdown)
 
 
 def render_society() -> None:
@@ -638,6 +673,10 @@ def render_tuning(config: SimulationConfig) -> None:
             "discovery_weight": config.discovery_weight,
             "author_diversity_penalty": config.author_diversity_penalty,
             "reply_boost": config.reply_boost,
+            "topic_match_weight": config.topic_match_weight,
+            "recency_weight": config.recency_weight,
+            "social_proof_weight": config.social_proof_weight,
+            "negative_action_penalty": config.negative_action_penalty,
             "random_seed": config.random_seed,
             "llm_backend": f"{config.model_provider} / {config.model_name}",
             "behavior": "LLMAgentBehavior" if st.session_state.get("use_llm") else "DeterministicBehavior",
@@ -660,6 +699,77 @@ def render_tuning(config: SimulationConfig) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
+    st.markdown('<div class="section-title">Save / Replay</div>', unsafe_allow_html=True)
+    st.download_button(
+        "Download Run JSON",
+        data=state.to_json(),
+        file_name=f"xsim-run-tick-{state.current_tick}.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+    uploaded = st.file_uploader("Load Run JSON", type=["json"])
+    if uploaded is not None:
+        try:
+            loaded = ExperimentState.from_json(uploaded.getvalue().decode("utf-8"))
+        except Exception as exc:
+            st.error(f"Could not load run JSON: {exc}")
+        else:
+            if st.button("Replace Current Run", type="primary", use_container_width=True):
+                st.session_state["experiment"] = loaded
+                st.session_state["engine"] = SimulationEngine(loaded)
+                st.session_state["selected_agent_id"] = (
+                    loaded.agents[0].id if loaded.agents else None
+                )
+                st.rerun()
+
+
+def render_analytics() -> None:
+    state = get_state()
+    st.markdown('<div class="section-title">Run Analytics</div>', unsafe_allow_html=True)
+
+    reach = reach_summary(state)
+    cols = st.columns(4)
+    cols[0].metric("Reach", f"{reach.reach_ratio:.0%}")
+    cols[1].metric("Reached agents", reach.reached_agents)
+    cols[2].metric("Engagements", len(state.engagements))
+    cols[3].metric("Ticks", state.current_tick)
+
+    activity = tick_activity_rows(state)
+    if activity:
+        st.markdown('<div class="section-title">Tick Activity</div>', unsafe_allow_html=True)
+        st.line_chart(activity, x="tick", y=["new_posts", "engagements"], height=260)
+
+    topic_rows = topic_spread_by_tick(state)
+    if topic_rows:
+        st.markdown('<div class="section-title">Topic Spread By Tick</div>', unsafe_allow_html=True)
+        st.dataframe(topic_rows, use_container_width=True, hide_index=True)
+
+    amplifiers = top_amplifiers(state, limit=10)
+    if amplifiers:
+        st.markdown('<div class="section-title">Top Amplifiers</div>', unsafe_allow_html=True)
+        st.dataframe(
+            [
+                {
+                    "agent": f"@{agent.username}",
+                    "score": score,
+                    "interests": ", ".join(agent.interests),
+                }
+                for agent, score in amplifiers
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    matrix = topic_author_matrix(state)
+    if matrix:
+        st.markdown('<div class="section-title">Topic / Author Matrix</div>', unsafe_allow_html=True)
+        rows = [
+            {"topic": topic, "author": author, "posts": count}
+            for topic, author_counts in matrix.items()
+            for author, count in author_counts.items()
+        ]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 init_state()
@@ -685,8 +795,8 @@ st.markdown(
 )
 render_stage_rail(get_state())
 
-overview_tab, feed_tab, society_tab, tuning_tab = st.tabs(
-    ["Overview", "Feed Lab", "Society", "Tuning"]
+overview_tab, feed_tab, society_tab, analytics_tab, tuning_tab = st.tabs(
+    ["Overview", "Feed Lab", "Society", "Analytics", "Tuning"]
 )
 
 with overview_tab:
@@ -697,6 +807,9 @@ with feed_tab:
 
 with society_tab:
     render_society()
+
+with analytics_tab:
+    render_analytics()
 
 with tuning_tab:
     render_tuning(config)

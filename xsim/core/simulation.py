@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import random
 from collections import Counter
+from datetime import UTC, datetime
 from typing import cast
 
-from xsim.core.models import Agent, FeedItem, Post, Scenario, SimulationConfig
+from xsim.core.models import Agent, Engagement, FeedItem, Post, Scenario, SimulationConfig
 
 
 ARCHETYPES: tuple[dict[str, str | list[str]], ...] = (
@@ -174,10 +175,16 @@ def rank_feed(
     posts: list[Post],
     config: SimulationConfig,
     limit: int = 20,
+    engagements: list[Engagement] | None = None,
 ) -> list[FeedItem]:
-    """Rank posts for one viewer using the knobs exposed in the Streamlit UI."""
-    ranked: list[FeedItem] = []
-    author_counts: Counter[str] = Counter()
+    """Rank posts for one viewer with inspectable score components.
+
+    The ranker is still intentionally lightweight, but it now has a shape
+    closer to a real feed model: topical relevance, network proximity, recency,
+    social proof, reply treatment, negative feedback, and author diversity.
+    """
+    candidates: list[FeedItem] = []
+    engagement_by_post = _engagement_counts(engagements or [])
 
     for post in posts:
         if post.author_id == viewer.id:
@@ -185,35 +192,103 @@ def rank_feed(
 
         topic_overlap = len(set(viewer.interests).intersection(post.topic_tags))
         in_network = post.author_id in viewer.following_ids
-        score = 1.0 + (topic_overlap * 0.7)
-        reason_parts: list[str] = []
+        post_engagements = engagement_by_post.get(post.id, Counter())
+        breakdown: dict[str, float] = {
+            "base": 1.0,
+            "topic": topic_overlap * config.topic_match_weight,
+            "network": config.in_network_weight if in_network else config.discovery_weight,
+            "recency": _recency_score(post, config),
+            "social": _social_score(post_engagements, config),
+            "negative": -_negative_score(post_engagements, config),
+        }
 
-        if in_network:
-            score += config.in_network_weight
-            reason_parts.append("in-network author")
+        score = sum(breakdown.values())
+
+        if topic_overlap:
+            topic_reason = f"topic +{breakdown['topic']:.2f}"
         else:
-            score += config.discovery_weight
-            reason_parts.append("discovery candidate")
+            topic_reason = "no topic match"
 
         if post.is_reply():
             score *= config.reply_boost
-            reason_parts.append("reply boost")
+            breakdown["reply_multiplier"] = config.reply_boost
 
-        if topic_overlap:
-            reason_parts.append(f"{topic_overlap} topic match{'es' if topic_overlap > 1 else ''}")
+        reason_parts = [
+            "in-network" if in_network else "discovery",
+            topic_reason,
+            f"recency +{breakdown['recency']:.2f}",
+        ]
+        if breakdown["social"] > 0:
+            reason_parts.append(f"social +{breakdown['social']:.2f}")
+        if breakdown["negative"] < 0:
+            reason_parts.append(f"negative {breakdown['negative']:.2f}")
+        if post.is_reply():
+            reason_parts.append(f"reply x{config.reply_boost:.1f}")
 
-        repeated_author_penalty = author_counts[post.author_id] * config.author_diversity_penalty
-        score -= repeated_author_penalty
-        if repeated_author_penalty:
-            reason_parts.append("author diversity penalty")
-
-        author_counts[post.author_id] += 1
-        ranked.append(
+        candidates.append(
             FeedItem(
                 post=post,
                 score=round(score, 3),
-                reason=", ".join(reason_parts) or "baseline relevance",
+                reason=", ".join(reason_parts),
+                score_breakdown={key: round(value, 3) for key, value in breakdown.items()},
             )
         )
 
-    return sorted(ranked, key=lambda item: item.score, reverse=True)[:limit]
+    return _select_with_author_diversity(candidates, config, limit)
+
+
+def _engagement_counts(engagements: list[Engagement]) -> dict[str, Counter[str]]:
+    counts: dict[str, Counter[str]] = {}
+    for engagement in engagements:
+        counts.setdefault(engagement.post_id, Counter())[engagement.action] += 1
+    return counts
+
+
+def _recency_score(post: Post, config: SimulationConfig) -> float:
+    now = datetime.now(UTC)
+    timestamp = post.timestamp
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    age_hours = max(0.0, (now - timestamp).total_seconds() / 3600)
+    return config.recency_weight / (1.0 + age_hours / 24.0)
+
+
+def _social_score(counts: Counter[str], config: SimulationConfig) -> float:
+    weighted = (
+        counts["like"] * 0.6
+        + counts["repost"] * 1.0
+        + counts["reply"] * 0.8
+        + counts["quote"] * 0.9
+        + counts["dwell"] * 0.2
+        + counts["click"] * 0.3
+    )
+    return min(3.0, weighted * config.social_proof_weight)
+
+
+def _negative_score(counts: Counter[str], config: SimulationConfig) -> float:
+    weighted = counts["not_interested"] + counts["block"] * 2.0 + counts["mute"] * 1.5
+    return weighted * config.negative_action_penalty
+
+
+def _select_with_author_diversity(
+    candidates: list[FeedItem],
+    config: SimulationConfig,
+    limit: int,
+) -> list[FeedItem]:
+    selected: list[FeedItem] = []
+    recent_authors: list[str] = []
+
+    for item in sorted(candidates, key=lambda candidate: candidate.score, reverse=True):
+        repeats = recent_authors.count(item.post.author_id)
+        if repeats:
+            penalty = repeats * config.author_diversity_penalty
+            item.score = round(item.score - penalty, 3)
+            item.score_breakdown["diversity"] = round(-penalty, 3)
+            item.reason = f"{item.reason}, diversity -{penalty:.2f}" if item.reason else None
+        selected.append(item)
+        recent_authors.append(item.post.author_id)
+        recent_authors = recent_authors[-config.feed_diversity_window :]
+        if len(selected) >= limit:
+            break
+
+    return sorted(selected, key=lambda candidate: candidate.score, reverse=True)
